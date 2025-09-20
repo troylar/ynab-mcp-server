@@ -133,6 +133,9 @@ async def create_server(
 
     maps = _build_route_maps(include_tags, exclude_tags, route_maps)
 
+    # Force-enable the new OpenAPI parser so users don't need to set an env var
+    os.environ.setdefault("FASTMCP_EXPERIMENTAL_ENABLE_NEW_OPENAPI_PARSER", "true")
+
     # Create the MCP server directly from the OpenAPI specification
     # Normalize tool names to snake_case via mcp_names mapping
     mcp_names = _build_mcp_names_from_spec(spec)
