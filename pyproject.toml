@@ -9,7 +9,7 @@ license = { text = "MIT" }
 
 # PEP 621-compliant dependency array
 dependencies = [
-  "fastmcp>=2.8.0",
+  "fastmcp>=2.8.0,<2.13.0",
   "httpx>=0.25,<1.0",
   "pydantic>=2.6,<3.0",
   "PyYAML>=6.0",

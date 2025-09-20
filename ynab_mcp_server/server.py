@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import os
+# Ensure new OpenAPI parser is enabled before FastMCP is imported
+os.environ["FASTMCP_EXPERIMENTAL_ENABLE_NEW_OPENAPI_PARSER"] = os.environ.get(
+    "FASTMCP_EXPERIMENTAL_ENABLE_NEW_OPENAPI_PARSER", "true"
+)
 import re
 from collections.abc import Iterable
 from typing import Any

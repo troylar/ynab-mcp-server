@@ -5,6 +5,9 @@ import asyncio
 import os
 from typing import NoReturn
 
+# Ensure new OpenAPI parser is enabled for FastMCP before any FastMCP import
+os.environ.setdefault("FASTMCP_EXPERIMENTAL_ENABLE_NEW_OPENAPI_PARSER", "true")
+
 from fastmcp import Client
 
 from .server import create_server
