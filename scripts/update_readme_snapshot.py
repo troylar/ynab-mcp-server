@@ -22,30 +22,44 @@ def _parse_tags(value: Optional[str]) -> Optional[Set[str]]:
     return tags or None
 
 
+import re
+
+def _short_desc(tool) -> str:
+    """Return a concise, one-line description.
+    Prefer OpenAPI summary from FastMCP metadata; otherwise use the first sentence of description.
+    """
+    meta = getattr(tool, "meta", None) or {}
+    fm = meta.get("_fastmcp", {})
+    summary = (fm.get("summary") or "").strip()
+    if summary:
+        return summary
+    desc = (tool.description or "").strip()
+    # Remove code blocks and excessive markdown artifacts
+    desc = re.sub(r"```[\s\S]*?```", " ", desc)
+    # Take first line or sentence
+    first = desc.split("\n", 1)[0]
+    m = re.match(r"(.+?[.!?])\s", first + " ")
+    out = (m.group(1) if m else first).strip()
+    # Collapse whitespace and limit length
+    out = re.sub(r"\s+", " ", out)
+    if len(out) > 140:
+        out = out[:137].rstrip() + "..."
+    return out
+
+
 def _render_markdown(tools) -> str:
     # tools: list[mcp.types.Tool]
     lines: list[str] = []
     lines.append("## Tools Inventory (Live Snapshot)\n")
     lines.append("This section is generated from your current environment. To refresh, run: `make snapshot-tools`.\n")
     lines.append("")
-    # Group by tags
-    def get_tags(t) -> set[str]:
-        meta = getattr(t, "meta", None) or {}
-        fm = meta.get("_fastmcp", {})
-        return set(fm.get("tags", []) or [])
-
-    # Collect tag set
-    all_tags: set[str] = set()
-    for t in tools:
-        all_tags |= get_tags(t)
-    lines.append("### Tags\n")
-    for tag in sorted(all_tags):
-        lines.append(f"- {tag}")
-    lines.append("")
-    lines.append("### Tools\n")
+    # Simple table: Tool | Description
+    lines.append("| Tool | Description |")
+    lines.append("|------|-------------|")
     for t in sorted(tools, key=lambda x: x.name):
-        desc = (t.description or "").strip()
-        lines.append(f"- `{t.name}` — {desc}")
+        name = t.name
+        desc = _short_desc(t).replace("|", "\\|")
+        lines.append(f"| `{name}` | {desc} |")
     lines.append("")
     return "\n".join(lines)
 
