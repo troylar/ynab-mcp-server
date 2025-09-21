@@ -5,7 +5,7 @@ description = "FastMCP-based MCP server for YNAB covering all endpoints via Open
 authors = [{ name = "troylar" }]
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 
 # PEP 621-compliant dependency array
 dependencies = [
@@ -37,6 +37,10 @@ dev = [
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ynab_mcp_server*"]
+exclude = ["coverage*", "tests*"]
 
 [tool.ruff]
 line-length = 100

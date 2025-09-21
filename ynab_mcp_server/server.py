@@ -6,6 +6,7 @@ os.environ["FASTMCP_EXPERIMENTAL_ENABLE_NEW_OPENAPI_PARSER"] = os.environ.get(
     "FASTMCP_EXPERIMENTAL_ENABLE_NEW_OPENAPI_PARSER", "true"
 )
 import re
+import json
 from collections.abc import Iterable
 from typing import Any
 
@@ -133,7 +134,141 @@ async def create_server(
         "Accept": "application/json",
     }
 
-    api_client = httpx.AsyncClient(base_url=base_url, headers=headers, timeout=timeout)
+    def _deep_clean_nulls(obj: Any) -> Any:
+        """Recursively remove keys with value None from mappings and
+        filter None items from lists. Leaves other values intact.
+
+        This is a defensive normalization for YNAB endpoints that sometimes
+        return `null` for optional objects (e.g., `default_budget: null`),
+        while the OpenAPI schema describes those as object types without
+        explicit `nullable: true`. Removing nulls allows output validation
+        to pass while preserving all real data.
+        """
+        if isinstance(obj, dict):
+            cleaned: dict[str, Any] = {}
+            for k, v in obj.items():
+                if v is None:
+                    # Drop null keys entirely
+                    continue
+                cleaned[k] = _deep_clean_nulls(v)
+            return cleaned
+        if isinstance(obj, list):
+            return [
+                _deep_clean_nulls(v)
+                for v in obj
+                if v is not None
+            ]
+        return obj
+
+    async def _response_hook(response: httpx.Response) -> None:
+        """Normalize successful empty/None JSON payloads and surface YNAB errors clearly.
+
+        IMPORTANT: This hook runs before the response body is accessed. We MUST
+        fully read the content before touching response.content/response.json().
+
+        - If 2xx and body is empty, JSON null, or 204 → coerce to '{}' so schemas expecting
+          an object won't fail client-side validation.
+        - If 2xx and JSON has top-level data: null → coerce to {"data": {}}.
+        - If non-2xx and JSON body has an 'error' field → raise with that context.
+        """
+        try:
+            # Ensure body is fully read (prevents streaming access errors)
+            if hasattr(response, "aread"):
+                await response.aread()  # type: ignore[attr-defined]
+
+            if 200 <= response.status_code < 300:
+                # Normalize empty body / null / 204
+                content = (response.content or b"")
+                if response.status_code == 204 or not content.strip():
+                    response._content = b"{}"  # type: ignore[attr-defined]
+                    response.headers["Content-Length"] = str(len(response._content))
+                else:
+                    try:
+                        data = response.json()
+                        if data is None:
+                            # Entire payload null → {}
+                            response._content = b"{}"  # type: ignore[attr-defined]
+                            response.headers["Content-Length"] = str(len(response._content))
+                        elif isinstance(data, dict) and data.get("data", ... ) is None:
+                            # Coerce {"data": null} → {"data": {}}
+                            data = {**data, "data": {}}
+                            new = json.dumps(data).encode("utf-8")
+                            response._content = new  # type: ignore[attr-defined]
+                            response.headers["Content-Length"] = str(len(new))
+                        elif isinstance(data, (dict, list)):
+                            # Drop null-valued fields recursively to satisfy schemas
+                            cleaned = _deep_clean_nulls(data)
+                            if cleaned is not data:
+                                new = json.dumps(cleaned).encode("utf-8")
+                                response._content = new  # type: ignore[attr-defined]
+                                response.headers["Content-Length"] = str(len(new))
+                    except Exception:
+                        # Non-JSON success bodies pass through as-is
+                        pass
+            else:
+                # Surface YNAB error details when available, and shape a uniform error payload
+                err = {
+                    "status": response.status_code,
+                    "id": None,
+                    "name": None,
+                    "detail": None,
+                    "request_id": response.headers.get("x-request-id"),
+                }
+                try:
+                    j = response.json()
+                    if isinstance(j, dict):
+                        # YNAB typically returns { error: { id, name, detail } } or similar
+                        e = j.get("error")
+                        if isinstance(e, dict):
+                            err["id"] = e.get("id")
+                            err["name"] = e.get("name")
+                            err["detail"] = e.get("detail") or e.get("message")
+                        elif e is not None:
+                            err["detail"] = str(e)
+                except Exception:
+                    # Not JSON; keep defaults
+                    pass
+
+                # Attach a uniform error JSON body for clients/inspectors
+                try:
+                    payload = {"error": {k: v for k, v in err.items() if v is not None}}
+                    response._content = json.dumps(payload).encode("utf-8")  # type: ignore[attr-defined]
+                    response.headers["Content-Length"] = str(len(response._content))
+                    response.headers["Content-Type"] = "application/json"
+                except Exception:
+                    pass
+
+                # 429-specific hint when rate limited
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After")
+                    hint = f" Rate limited. Retry-After={retry_after}" if retry_after else " Rate limited."
+                else:
+                    hint = ""
+
+                # Raise with a rich message (FastMCP surfaces this to MCP clients)
+                msg = f"YNAB API error {response.status_code}:{hint}"
+                if err["detail"]:
+                    msg += f" {err['detail']}"
+                elif err["name"]:
+                    msg += f" {err['name']}"
+
+                raise httpx.HTTPStatusError(
+                    msg,
+                    request=response.request,
+                    response=response,
+                )
+        except httpx.HTTPError:
+            raise
+        except Exception as ex:
+            # Never crash in hook; surface as HTTPError with context
+            raise httpx.HTTPError(f"Response handling failed: {ex}")
+
+    api_client = httpx.AsyncClient(
+        base_url=base_url,
+        headers=headers,
+        timeout=timeout,
+        event_hooks={"response": [_response_hook]},
+    )
 
     maps = _build_route_maps(include_tags, exclude_tags, route_maps)
 

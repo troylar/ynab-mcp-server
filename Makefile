@@ -2,12 +2,24 @@
 # Usage: make [target]
 
 # --- Config ----
-UV ?= uv
+UV ?= $(shell which uv)
 APP := ynab-mcp-server
+
+# Load .env if present (so YNAB_ACCESS_TOKEN and others are available to all targets)
+ifneq (,$(wildcard .env))
+include .env
+# Export all keys defined in .env so shell commands can see them
+export $(shell sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' .env)
+endif
 
 # Optional filters (comma-separated)
 INCLUDE_TAGS ?=
 EXCLUDE_TAGS ?=
+
+# Debug defaults
+METHOD ?= GET
+QUERY ?=
+JSON ?=
 
 # Colors
 RESET=\033[0m
@@ -62,6 +74,15 @@ list-tools-names:
 tool-schema:
 	@NAME="$(NAME)" INCLUDE_TAGS="$(INCLUDE_TAGS)" EXCLUDE_TAGS="$(EXCLUDE_TAGS)" YNAB_ACCESS_TOKEN="$$YNAB_ACCESS_TOKEN" \
 		$(UV) run python scripts/tool_schema.py $$NAME
+
+## Debug raw HTTP call to YNAB (PATH, optional METHOD, QUERY, JSON body); requires token
+# Usage examples:
+#   make debug-raw PATH=/budgets
+#   make debug-raw PATH=/budgets QUERY=include_accounts=true
+#   make debug-raw PATH=/budgets/last-used/categories
+#   make debug-raw PATH=/transactions METHOD=POST JSON='{"transaction": {...}}'
+debug-raw:
+	@YNAB_ACCESS_TOKEN="$$YNAB_ACCESS_TOKEN" $(UV) run python scripts/debug_raw.py "$(PATH)" --method "$(METHOD)" --query "$(QUERY)" --json "$(JSON)"
 
 ## List unique OpenAPI tags across generated tools (respects filters; requires YNAB_ACCESS_TOKEN)
 list-tags:
